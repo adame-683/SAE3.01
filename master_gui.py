@@ -1,148 +1,156 @@
 import sys
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
-                             QHBoxLayout, QPushButton, QTextEdit, QLabel, QTableWidget,
-                             QTableWidgetItem, QGroupBox)
-from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+import threading
+import os
+
+# PyQt5 peut ne pas fonctionner dans Docker sans X11
+# Ce fichier est pour lancement local uniquement
+try:
+    from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                                 QHBoxLayout, QPushButton, QTextEdit, QLabel, QGroupBox)
+    from PyQt5.QtCore import QTimer, pyqtSignal, QObject
+
+    PYQT_AVAILABLE = True
+except ImportError:
+    PYQT_AVAILABLE = False
+    print("[MASTER_GUI] PyQt5 non disponible - utilisez master.py en CLI")
+
 from master import Master
-from database import Database
+
+if PYQT_AVAILABLE:
+    class MasterSignals(QObject):
+        """Signaux pour la communication thread-safe avec l'interface"""
+        log_signal = pyqtSignal(str)
+        router_count_signal = pyqtSignal(int)
 
 
-class MasterThread(QThread):
-    """Thread pour exécuter le serveur Master"""
-    log_signal = pyqtSignal(str)
+    class MasterGUI(QMainWindow):
+        """Interface graphique pour le Master"""
 
-    def __init__(self, master):
-        super().__init__()
-        self.master = master
+        def __init__(self):
+            super().__init__()
+            self.master = None
+            self.master_thread = None
+            self.signals = MasterSignals()
 
-    def run(self):
-        self.master.start()
+            self.init_ui()
 
+            # Connecter les signaux
+            self.signals.log_signal.connect(self.append_log)
+            self.signals.router_count_signal.connect(self.update_router_count)
 
-class MasterGUI(QMainWindow):
-    """Interface graphique pour le serveur Master"""
+        def init_ui(self):
+            """Initialise l'interface utilisateur"""
+            self.setWindowTitle("Master - Routage en Oignon")
+            self.setGeometry(100, 100, 800, 600)
 
-    def __init__(self):
-        super().__init__()
-        self.master = Master()
-        self.master_thread = None
-        self.db = Database()
+            # Widget central
+            central_widget = QWidget()
+            self.setCentralWidget(central_widget)
 
-        self.init_ui()
+            # Layout principal
+            main_layout = QVBoxLayout()
+            central_widget.setLayout(main_layout)
 
-        # Timer pour rafraîchir les données
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_display)
-        self.timer.start(2000)  # Refresh toutes les 2 secondes
+            # En-tête
+            header = QLabel("<h2>Serveur Master - Gestion des Routeurs</h2>")
+            main_layout.addWidget(header)
 
-    def init_ui(self):
-        """Initialise l'interface utilisateur"""
-        self.setWindowTitle("Master - Routage en Oignon")
-        self.setGeometry(100, 100, 900, 600)
+            # Groupe de contrôle
+            control_group = QGroupBox("Contrôles")
+            control_layout = QHBoxLayout()
+            control_group.setLayout(control_layout)
 
-        # Widget central
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+            self.start_button = QPushButton("Démarrer Master")
+            self.start_button.clicked.connect(self.start_master)
+            control_layout.addWidget(self.start_button)
 
-        # Titre
-        title = QLabel("🔐 Serveur Master - Routage en Oignon")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; padding: 10px;")
-        main_layout.addWidget(title)
+            self.stop_button = QPushButton("Arrêter Master")
+            self.stop_button.clicked.connect(self.stop_master)
+            self.stop_button.setEnabled(False)
+            control_layout.addWidget(self.stop_button)
 
-        # Boutons de contrôle
-        control_layout = QHBoxLayout()
-        self.btn_start = QPushButton("▶ Démarrer Master")
-        self.btn_start.clicked.connect(self.start_master)
-        self.btn_stop = QPushButton("⏹ Arrêter Master")
-        self.btn_stop.clicked.connect(self.stop_master)
-        self.btn_stop.setEnabled(False)
+            main_layout.addWidget(control_group)
 
-        control_layout.addWidget(self.btn_start)
-        control_layout.addWidget(self.btn_stop)
-        main_layout.addLayout(control_layout)
+            # Groupe de statistiques
+            stats_group = QGroupBox("Statistiques")
+            stats_layout = QVBoxLayout()
+            stats_group.setLayout(stats_layout)
 
-        # Status
-        self.status_label = QLabel("Status: Arrêté")
-        self.status_label.setStyleSheet("padding: 5px; background-color: #ffcccc;")
-        main_layout.addWidget(self.status_label)
+            self.router_count_label = QLabel("Routeurs connectés: 0")
+            stats_layout.addWidget(self.router_count_label)
 
-        # Table des routeurs
-        router_group = QGroupBox("Routeurs Enregistrés")
-        router_layout = QVBoxLayout()
-        self.router_table = QTableWidget()
-        self.router_table.setColumnCount(4)
-        self.router_table.setHorizontalHeaderLabels(["ID", "IP", "Port", "Clé Publique"])
-        router_layout.addWidget(self.router_table)
-        router_group.setLayout(router_layout)
-        main_layout.addWidget(router_group)
+            main_layout.addWidget(stats_group)
 
-        # Logs
-        log_group = QGroupBox("Logs")
-        log_layout = QVBoxLayout()
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        log_layout.addWidget(self.log_text)
-        log_group.setLayout(log_layout)
-        main_layout.addWidget(log_group)
+            # Zone de logs
+            logs_group = QGroupBox("Logs")
+            logs_layout = QVBoxLayout()
+            logs_group.setLayout(logs_layout)
 
-    def start_master(self):
-        """Démarre le serveur Master"""
-        self.master_thread = MasterThread(self.master)
-        self.master_thread.start()
+            self.log_text = QTextEdit()
+            self.log_text.setReadOnly(True)
+            logs_layout.addWidget(self.log_text)
 
-        self.btn_start.setEnabled(False)
-        self.btn_stop.setEnabled(True)
-        self.status_label.setText("Status: En cours d'exécution")
-        self.status_label.setStyleSheet("padding: 5px; background-color: #ccffcc;")
-        self.add_log("Master démarré sur port 8000")
+            main_layout.addWidget(logs_group)
 
-    def stop_master(self):
-        """Arrête le serveur Master"""
-        self.master.stop()
-        if self.master_thread:
-            self.master_thread.quit()
-            self.master_thread.wait()
+            # Timer pour rafraîchir les statistiques
+            self.timer = QTimer()
+            self.timer.timeout.connect(self.update_stats)
+            self.timer.start(2000)  # Toutes les 2 secondes
 
-        self.btn_start.setEnabled(True)
-        self.btn_stop.setEnabled(False)
-        self.status_label.setText("Status: Arrêté")
-        self.status_label.setStyleSheet("padding: 5px; background-color: #ffcccc;")
-        self.add_log("Master arrêté")
+        def start_master(self):
+            """Démarre le serveur Master"""
+            if self.master is None:
+                self.master = Master(host='0.0.0.0', port=8000)
+                self.master_thread = threading.Thread(target=self.master.start)
+                self.master_thread.daemon = True
+                self.master_thread.start()
 
-    def update_display(self):
-        """Met à jour l'affichage des routeurs et logs"""
-        # Mettre à jour la table des routeurs
-        routers = self.db.get_all_routers()
-        self.router_table.setRowCount(len(routers))
+                self.signals.log_signal.emit("[GUI] Master démarré sur le port 8000")
 
-        for row, router in enumerate(routers):
-            router_id, ip, port, public_key = router
-            self.router_table.setItem(row, 0, QTableWidgetItem(str(router_id)))
-            self.router_table.setItem(row, 1, QTableWidgetItem(ip))
-            self.router_table.setItem(row, 2, QTableWidgetItem(str(port)))
-            self.router_table.setItem(row, 3, QTableWidgetItem(str(public_key)[:20] + "..."))
+                self.start_button.setEnabled(False)
+                self.stop_button.setEnabled(True)
 
-    def add_log(self, message):
-        """Ajoute un message dans les logs"""
-        self.log_text.append(f"[{self.get_timestamp()}] {message}")
+        def stop_master(self):
+            """Arrête le serveur Master"""
+            if self.master:
+                self.master.stop()
+                self.master = None
 
-    @staticmethod
-    def get_timestamp():
-        """Retourne l'horodatage actuel"""
-        from datetime import datetime
-        return datetime.now().strftime("%H:%M:%S")
+                self.signals.log_signal.emit("[GUI] Master arrêté")
 
-    def closeEvent(self, event):
-        """Gère la fermeture de la fenêtre"""
-        if self.master.running:
-            self.stop_master()
-        self.db.close()
-        event.accept()
+                self.start_button.setEnabled(True)
+                self.stop_button.setEnabled(False)
 
+        def update_stats(self):
+            """Met à jour les statistiques"""
+            if self.master:
+                count = len(self.master.routers)
+                self.signals.router_count_signal.emit(count)
+
+        def update_router_count(self, count):
+            """Met à jour le nombre de routeurs"""
+            self.router_count_label.setText(f"Routeurs connectés: {count}")
+
+        def append_log(self, message):
+            """Ajoute un message aux logs"""
+            self.log_text.append(message)
+
+        def closeEvent(self, event):
+            """Gère la fermeture de la fenêtre"""
+            if self.master:
+                self.master.stop()
+            event.accept()
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    gui = MasterGUI()
-    gui.show()
-    sys.exit(app.exec_())
+    if not PYQT_AVAILABLE:
+        print("PyQt5 non installé. Démarrage du Master en mode CLI...")
+        master = Master()
+        try:
+            master.start()
+        except KeyboardInterrupt:
+            master.stop()
+    else:
+        app = QApplication(sys.argv)
+        gui = MasterGUI()
+        gui.show()
+        sys.exit(app.exec_())

@@ -9,32 +9,81 @@ class SimpleCrypto:
         """Génère une paire clé publique/privée simple"""
         # Clé privée: nombre premier aléatoire
         private_key = random.choice([1009, 1013, 1019, 1021, 1031, 1033,
-                                     1039, 1049, 1051, 1061, 1063, 1069])
+                                     1039, 1049, 1051, 1061, 1063, 1069,
+                                     1087, 1091, 1093, 1097, 1103, 1109])
         # Clé publique: multiple du privé
-        public_key = private_key * random.randint(10, 100)
+        public_key = private_key * random.randint(50, 150)
         return public_key, private_key
 
     @staticmethod
     def encrypt(data, public_key):
         """Chiffre les données avec la clé publique"""
         if isinstance(data, str):
-            data = data.encode()
-        encrypted = bytes([(byte + public_key) % 256 for byte in data])
-        return encrypted
+            data = data.encode('utf-8')
+
+        # Utilise XOR avec la clé pour chiffrer
+        key_bytes = str(public_key).encode('utf-8')
+        encrypted = bytearray()
+
+        for i, byte in enumerate(data):
+            key_byte = key_bytes[i % len(key_bytes)]
+            encrypted.append(byte ^ key_byte)
+
+        return bytes(encrypted)
 
     @staticmethod
     def decrypt(data, private_key):
         """Déchiffre les données avec la clé privée"""
-        decrypted = bytes([(byte - private_key) % 256 for byte in data])
-        return decrypted
+        # Utilise XOR avec la clé pour déchiffrer
+        key_bytes = str(private_key).encode('utf-8')
+        decrypted = bytearray()
 
-    @staticmethod
-    def encode_address(ip, port):
-        """Encode une adresse IP:port en format standard"""
-        return f"{ip}:{port}".encode()
+        for i, byte in enumerate(data):
+            key_byte = key_bytes[i % len(key_bytes)]
+            decrypted.append(byte ^ key_byte)
 
-    @staticmethod
-    def decode_address(data):
-        """Décode une adresse depuis le format standard"""
-        decoded = data.decode().split(':')
-        return decoded[0], int(decoded[1])
+        return bytes(decrypted)
+
+
+def encode_data(parts):
+    """Encode une liste de chaînes en format transmissible"""
+    # Format: longueur1|data1|longueur2|data2|...
+    result = b''
+    for part in parts:
+        if isinstance(part, str):
+            part = part.encode('utf-8')
+        elif isinstance(part, int):
+            part = str(part).encode('utf-8')
+
+        length = str(len(part)).encode('utf-8')
+        result += length + b'|' + part + b'|'
+
+    return result
+
+
+def decode_data(data):
+    """Décode les données au format transmissible"""
+    parts = []
+    i = 0
+
+    while i < len(data):
+        # Lire la longueur
+        pipe_pos = data.find(b'|', i)
+        if pipe_pos == -1:
+            break
+
+        try:
+            length = int(data[i:pipe_pos].decode('utf-8'))
+        except:
+            break
+
+        start = pipe_pos + 1
+        end = start + length
+
+        if end > len(data):
+            break
+
+        parts.append(data[start:end])
+        i = end + 1  # Sauter le pipe final
+
+    return parts
