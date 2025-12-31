@@ -1,0 +1,120 @@
+services:
+  db:
+    image: mariadb:latest
+    container_name: mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpwd
+      MARIADB_DATABASE: onion_routing
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  master:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: master
+    command: ["python", "-u", "master.py"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PASS: rootpwd
+      DB_USER: root
+      MASTER_HOST: 0.0.0.0
+      MASTER_PORT: 8000
+    ports:
+      - "8000:8000"
+
+  router1:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: router1
+    command: ["python", "-u", "router.py", "1", "9001"]
+    depends_on:
+      - master
+    environment:
+      MASTER_HOST: master
+      MASTER_PORT: 8000
+      ROUTER_HOST: router1
+    ports:
+      - "9001:9001"
+
+  router2:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: router2
+    command: ["python", "-u", "router.py", "2", "9002"]
+    depends_on:
+      - master
+    environment:
+      MASTER_HOST: master
+      MASTER_PORT: 8000
+      ROUTER_HOST: router2
+    ports:
+      - "9002:9002"
+
+  router3:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: router3
+    command: ["python", "-u", "router.py", "3", "9003"]
+    depends_on:
+      - master
+    environment:
+      MASTER_HOST: master
+      MASTER_PORT: 8000
+      ROUTER_HOST: router3
+    ports:
+      - "9003:9003"
+
+  clienta:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: clienta
+    command: ["python", "-u", "client.py", "ClientA", "10000"]
+    depends_on:
+      - master
+    environment:
+      MASTER_HOST: master
+      MASTER_PORT: 8000
+    ports:
+      - "10000:10000"
+    stdin_open: true
+    tty: true
+
+  clientb:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    image: onion-app
+    container_name: clientb
+    command: ["python", "-u", "client.py", "ClientB", "10001"]
+    depends_on:
+      - master
+    environment:
+      MASTER_HOST: master
+      MASTER_PORT: 8000
+    ports:
+      - "10001:10001"
+    stdin_open: true
+    tty: true
+
+volumes:
+  db_data:
